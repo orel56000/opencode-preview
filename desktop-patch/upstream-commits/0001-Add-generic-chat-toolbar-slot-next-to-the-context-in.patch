@@ -1,0 +1,100 @@
+From 5384aff4663a546a362b183914062b55def9cc2a Mon Sep 17 00:00:00 2001
+From: orel <orelatia65@gmail.com>
+Date: Mon, 7 Sep 2026 12:40:21 +0300
+Subject: [PATCH 1/2] Add generic chat toolbar slot next to the context
+ indicator
+
+---
+ .../app/src/components/chat-toolbar-slot.tsx  | 59 +++++++++++++++++++
+ .../session/timeline/message-timeline.tsx     |  2 +
+ 2 files changed, 61 insertions(+)
+ create mode 100644 packages/app/src/components/chat-toolbar-slot.tsx
+
+diff --git a/packages/app/src/components/chat-toolbar-slot.tsx b/packages/app/src/components/chat-toolbar-slot.tsx
+new file mode 100644
+index 0000000..235ddb8
+--- /dev/null
++++ b/packages/app/src/components/chat-toolbar-slot.tsx
+@@ -0,0 +1,59 @@
++import { For, type JSX } from "solid-js"
++
++export interface ChatToolbarAction {
++  /** Unique action id, e.g. `"preview"`. */
++  id: string
++  /** Render order; lower renders first. The context usage indicator is `0`. */
++  order?: number
++  /** Rendered inline in the chat toolbar, beside the context indicator. */
++  render: () => JSX.Element
++}
++
++const actions = new Map<string, ChatToolbarAction>()
++const listeners = new Set<() => void>()
++
++function notify(): void {
++  for (const listener of listeners) listener()
++}
++
++/**
++ * Generic chat-toolbar extension primitive.
++ *
++ * Plugins and built-in features register toolbar actions here instead of
++ * patching toolbar files directly:
++ *
++ * ```tsx
++ * registerChatToolbarAction({
++ *   id: "preview",
++ *   order: 10,
++ *   render: () => <PreviewButton />,
++ * })
++ * ```
++ */
++export function registerChatToolbarAction(action: ChatToolbarAction): () => void {
++  actions.set(action.id, action)
++  notify()
++  return () => {
++    if (actions.delete(action.id)) notify()
++  }
++}
++
++export function getChatToolbarActions(): ChatToolbarAction[] {
++  return [...actions.values()].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
++}
++
++export function onChatToolbarActionsChange(listener: () => void): () => void {
++  listeners.add(listener)
++  return () => {
++    listeners.delete(listener)
++  }
++}
++
++/** Renders registered actions inline, directly after the context indicator. */
++export function ChatToolbarSlot(): JSX.Element {
++  return (
++    <For each={getChatToolbarActions()}>
++      {(action) => action.render()}
++    </For>
++  )
++}
+diff --git a/packages/app/src/pages/session/timeline/message-timeline.tsx b/packages/app/src/pages/session/timeline/message-timeline.tsx
+index e083882..69751f2 100644
+--- a/packages/app/src/pages/session/timeline/message-timeline.tsx
++++ b/packages/app/src/pages/session/timeline/message-timeline.tsx
+@@ -60,6 +60,7 @@ import { normalize } from "@opencode-ai/session-ui/session-diff"
+ import { useFileComponent } from "@opencode-ai/ui/context/file"
+ import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
+ import { SessionContextUsage } from "@/components/session-context-usage"
++import { ChatToolbarSlot } from "@/components/chat-toolbar-slot"
+ import { useDialog } from "@opencode-ai/ui/context/dialog"
+ import { useLanguage } from "@/context/language"
+ import { useSessionKey } from "@/pages/session/session-layout"
+@@ -1478,6 +1479,7 @@ export function MessageTimeline(props: {
+                       placement="bottom"
+                       buttonAppearance={settings.general.newLayoutDesigns() ? "v2" : "default"}
+                     />
++                    <ChatToolbarSlot />
+                     <Show when={!parentID()}>
+                       <Show
+                         when={settings.general.newLayoutDesigns()}
+-- 
+2.50.1 (Apple Git-155)
+

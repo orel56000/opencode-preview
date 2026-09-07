@@ -1,0 +1,949 @@
+From 4d9aefadd47931b1e857c819a267f6373ec80e20 Mon Sep 17 00:00:00 2001
+From: orel <orelatia65@gmail.com>
+Date: Mon, 7 Sep 2026 12:43:28 +0300
+Subject: [PATCH 2/2] Integrate opencode-preview into OpenCode Desktop
+
+- Preview toolbar button beside the context indicator via the
+  generic chat toolbar slot (PreviewHost + panel/details/logs)
+- PreviewPlatform extension point on the app Platform context
+- Electron main preview backend (per-project PreviewService,
+  typed IPC, shell.openExternal for Open) with cleanup on quit
+- Preload bridge + renderer Platform wiring
+---
+ .../src/components/previews/PreviewButton.tsx | 55 +++++++++++
+ .../components/previews/PreviewDetails.tsx    | 69 ++++++++++++++
+ .../src/components/previews/PreviewHost.tsx   | 55 +++++++++++
+ .../src/components/previews/PreviewItem.tsx   | 91 ++++++++++++++++++
+ .../src/components/previews/PreviewPanel.tsx  | 91 ++++++++++++++++++
+ .../app/src/components/previews/status.ts     | 93 +++++++++++++++++++
+ packages/app/src/components/previews/store.ts | 93 +++++++++++++++++++
+ .../src/components/previews/toolbar-init.tsx  | 13 +++
+ packages/app/src/context/platform.tsx         | 45 +++++++++
+ .../session/timeline/message-timeline.tsx     |  1 +
+ packages/desktop/package.json                 |  3 +-
+ packages/desktop/src/main/index.ts            |  2 +
+ packages/desktop/src/main/ipc.ts              |  3 +
+ .../desktop/src/main/previews/service-host.ts | 88 ++++++++++++++++++
+ packages/desktop/src/preload/index.ts         |  9 ++
+ packages/desktop/src/preload/types.ts         | 29 ++++++
+ packages/desktop/src/renderer/index.tsx       |  9 ++
+ 17 files changed, 748 insertions(+), 1 deletion(-)
+ create mode 100644 packages/app/src/components/previews/PreviewButton.tsx
+ create mode 100644 packages/app/src/components/previews/PreviewDetails.tsx
+ create mode 100644 packages/app/src/components/previews/PreviewHost.tsx
+ create mode 100644 packages/app/src/components/previews/PreviewItem.tsx
+ create mode 100644 packages/app/src/components/previews/PreviewPanel.tsx
+ create mode 100644 packages/app/src/components/previews/status.ts
+ create mode 100644 packages/app/src/components/previews/store.ts
+ create mode 100644 packages/app/src/components/previews/toolbar-init.tsx
+ create mode 100644 packages/desktop/src/main/previews/service-host.ts
+
+diff --git a/packages/app/src/components/previews/PreviewButton.tsx b/packages/app/src/components/previews/PreviewButton.tsx
+new file mode 100644
+index 0000000..f835401
+--- /dev/null
++++ b/packages/app/src/components/previews/PreviewButton.tsx
+@@ -0,0 +1,55 @@
++import { Show, type JSX } from "solid-js"
++import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
++import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
++import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
++import type { PreviewSnapshot } from "@/context/platform"
++import { aggregateStatus, previewTooltip, runningCount } from "./status"
++
++export interface PreviewButtonProps {
++  snapshots: PreviewSnapshot[]
++  open: boolean
++  onToggle: () => void
++}
++
++/**
++ * Preview toolbar button. Sits directly beside the circular context-window
++ * indicator and shares its sizing, tooltip style and focus behavior.
++ */
++export function PreviewButton(props: PreviewButtonProps): JSX.Element {
++  const aggregate = () => aggregateStatus(props.snapshots)
++  const dotColor = () => {
++    switch (aggregate()) {
++      case "active":
++        return "var(--v2-icon-icon-success, #22c55e)"
++      case "starting":
++        return "var(--v2-icon-icon-warning, #eab308)"
++      case "error":
++        return "var(--v2-icon-icon-danger, #ef4444)"
++      case "idle":
++        return "transparent"
++    }
++  }
++
++  return (
++    <TooltipV2 value={previewTooltip(props.snapshots)} placement="bottom" shift={-8}>
++      <span class="relative inline-flex">
++        <IconButtonV2
++          type="button"
++          variant="ghost-muted"
++          size="large"
++          icon={<IconV2 name="monitor" />}
++          onClick={props.onToggle}
++          aria-label="Previews"
++          aria-expanded={props.open}
++        />
++        <Show when={aggregate() !== "idle" || runningCount(props.snapshots) > 0}>
++          <span
++            aria-hidden="true"
++            class="pointer-events-none absolute bottom-1 right-1 size-2 rounded-full"
++            style={{ background: dotColor() }}
++          />
++        </Show>
++      </span>
++    </TooltipV2>
++  )
++}
+diff --git a/packages/app/src/components/previews/PreviewDetails.tsx b/packages/app/src/components/previews/PreviewDetails.tsx
+new file mode 100644
+index 0000000..15d2556
+--- /dev/null
++++ b/packages/app/src/components/previews/PreviewDetails.tsx
+@@ -0,0 +1,69 @@
++import { For, Show, type JSX } from "solid-js"
++import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
++import type { PreviewSnapshot } from "@/context/platform"
++import { formatUptime, statusColor, statusGlyph, statusLabel } from "./status"
++
++export function PreviewDetails(props: {
++  snapshot: PreviewSnapshot
++  logs: string[]
++  onStart: (id: string) => void
++  onStop: (id: string) => void
++  onRestart: (id: string) => void
++  onOpen: (id: string) => void
++  onBack: () => void
++}): JSX.Element {
++  const snapshot = () => props.snapshot
++  const definition = () => snapshot().definition
++
++  return (
++    <div class="flex min-h-0 flex-1 flex-col gap-2">
++      <div class="flex items-center gap-2">
++        <ButtonV2 size="small" variant="ghost" onClick={props.onBack} aria-label="Back to previews">
++          ←
++        </ButtonV2>
++        <span class="min-w-0 flex-1 truncate font-semibold">{definition().name}</span>
++        <span class="shrink-0" style={{ color: statusColor(snapshot().status) }}>
++          {statusGlyph(snapshot().status)} {statusLabel(snapshot().status)}
++        </span>
++      </div>
++
++      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
++        <dt class="text-v2-text-text-muted">URL</dt>
++        <dd class="truncate">{snapshot().url ?? "—"}</dd>
++        <dt class="text-v2-text-text-muted">Port</dt>
++        <dd>{definition().port}</dd>
++        <Show when={snapshot().pid !== undefined}>
++          <dt class="text-v2-text-text-muted">PID</dt>
++          <dd>{snapshot().pid}</dd>
++        </Show>
++        <dt class="text-v2-text-text-muted">Uptime</dt>
++        <dd>{formatUptime(snapshot().uptimeMs)}</dd>
++        <dt class="text-v2-text-text-muted">Command</dt>
++        <dd class="truncate">{definition().command}</dd>
++      </dl>
++
++      <div class="flex flex-wrap gap-1.5">
++        <ButtonV2 size="small" onClick={() => props.onOpen(definition().id)} aria-label="Open in browser">
++          Open
++        </ButtonV2>
++        <ButtonV2 size="small" variant="outline" onClick={() => props.onRestart(definition().id)} aria-label="Restart preview">
++          Restart
++        </ButtonV2>
++        <ButtonV2 size="small" variant="ghost" onClick={() => props.onStop(definition().id)} aria-label="Stop preview">
++          Stop
++        </ButtonV2>
++      </div>
++
++      <div class="text-v2-text-text-muted">Logs</div>
++      <div
++        role="log"
++        aria-label={`${definition().name} logs`}
++        class="min-h-24 flex-1 overflow-y-auto rounded-md border p-2 font-mono text-xs"
++      >
++        <Show when={props.logs.length > 0} fallback={<span class="text-v2-text-text-muted">No logs yet.</span>}>
++          <For each={props.logs}>{(line) => <div class="select-text whitespace-pre-wrap break-all">{line}</div>}</For>
++        </Show>
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/app/src/components/previews/PreviewHost.tsx b/packages/app/src/components/previews/PreviewHost.tsx
+new file mode 100644
+index 0000000..b48f773
+--- /dev/null
++++ b/packages/app/src/components/previews/PreviewHost.tsx
+@@ -0,0 +1,55 @@
++import { Show, createMemo, createSignal, type JSX } from "solid-js"
++import { usePlatform } from "@/context/platform"
++import { useSDK } from "@/context/sdk"
++import { createPreviewStore } from "./store"
++import { PreviewButton } from "./PreviewButton"
++import { PreviewPanel } from "./PreviewPanel"
++
++/**
++ * Preview toolbar entry: `[ Preview ]` beside the context indicator.
++ * Rendered through the generic `ChatToolbarSlot`; hidden when the platform
++ * provides no preview backend (e.g. the web build).
++ */
++export function PreviewHost(): JSX.Element {
++  const platform = usePlatform()
++  const sdk = useSDK()
++  const [open, setOpen] = createSignal(false)
++
++  const store = createMemo(() => {
++    const backend = platform.previews
++    if (!backend) return undefined
++    return createPreviewStore(backend, sdk().directory)
++  })
++
++  return (
++    <Show when={store()}>
++      {(preview) => (
++        <span class="relative inline-flex">
++          <PreviewButton
++            snapshots={preview().snapshots()}
++            open={open()}
++            onToggle={() => setOpen((v) => !v)}
++          />
++          <Show when={open()}>
++            <div class="absolute right-0 top-full z-50 mt-2">
++              <PreviewPanel
++                snapshots={preview().snapshots()}
++                logs={(id) => preview().logs(id)}
++                actions={{
++                  onStart: (id) => void preview().start(id),
++                  onStop: (id) => void preview().stop(id),
++                  onRestart: (id) => void preview().restart(id),
++                  onOpen: (id) => void preview().open(id),
++                  onSelect: () => {},
++                  onRefreshLogs: (id) => void preview().refreshLogs(id),
++                  busy: (id) => preview().busy(id),
++                }}
++                onClose={() => setOpen(false)}
++              />
++            </div>
++          </Show>
++        </span>
++      )}
++    </Show>
++  )
++}
+diff --git a/packages/app/src/components/previews/PreviewItem.tsx b/packages/app/src/components/previews/PreviewItem.tsx
+new file mode 100644
+index 0000000..80852c8
+--- /dev/null
++++ b/packages/app/src/components/previews/PreviewItem.tsx
+@@ -0,0 +1,91 @@
++import { Show, type JSX } from "solid-js"
++import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
++import type { PreviewSnapshot } from "@/context/platform"
++import { previewUrl, statusColor, statusGlyph, statusLabel } from "./status"
++
++export interface PreviewItemActions {
++  onStart: (id: string) => void
++  onStop: (id: string) => void
++  onRestart: (id: string) => void
++  onOpen: (id: string) => void
++  onSelect: (id: string) => void
++  busy: (id: string) => boolean
++}
++
++export function PreviewItem(props: {
++  snapshot: PreviewSnapshot
++  selected: boolean
++  actions: PreviewItemActions
++}): JSX.Element {
++  const snapshot = () => props.snapshot
++  const definition = () => snapshot().definition
++  const url = () => snapshot().url ?? previewUrl(definition())
++  const busy = () => props.actions.busy(definition().id)
++  const running = () => snapshot().status === "running"
++
++  return (
++    <div
++      role="button"
++      tabindex={0}
++      aria-label={`${definition().name}, ${statusLabel(snapshot().status)}`}
++      class="flex flex-col gap-1 rounded-md px-2 py-1.5 outline-none focus-visible:ring-2"
++      data-selected={props.selected}
++      onClick={() => props.actions.onSelect(definition().id)}
++      onKeyDown={(event) => {
++        if (event.key === "Enter" || event.key === " ") {
++          event.preventDefault()
++          props.actions.onSelect(definition().id)
++        }
++      }}
++    >
++      <div class="flex min-w-0 items-center gap-2">
++        <span aria-hidden="true" style={{ color: statusColor(snapshot().status) }}>
++          {statusGlyph(snapshot().status)}
++        </span>
++        <span class="min-w-0 flex-1 truncate font-medium">{definition().name}</span>
++        <span class="shrink-0 text-v2-text-text-muted">{statusLabel(snapshot().status)}</span>
++      </div>
++      <div class="truncate text-v2-text-text-muted">{url()}</div>
++      <Show when={snapshot().error}>
++        <div class="truncate text-v2-text-text-danger">{snapshot().error}</div>
++      </Show>
++      <div class="flex flex-wrap gap-1.5" onClick={(event) => event.stopPropagation()}>
++        <Show
++          when={running()}
++          fallback={
++            <ButtonV2
++              size="small"
++              disabled={busy()}
++              onClick={() => props.actions.onStart(definition().id)}
++              aria-label={`Start ${definition().name}`}
++            >
++              Start
++            </ButtonV2>
++          }
++        >
++          <ButtonV2 size="small" onClick={() => props.actions.onOpen(definition().id)} aria-label={`Open ${definition().name}`}>
++            Open
++          </ButtonV2>
++          <ButtonV2
++            size="small"
++            variant="outline"
++            disabled={busy()}
++            onClick={() => props.actions.onRestart(definition().id)}
++            aria-label={`Restart ${definition().name}`}
++          >
++            Restart
++          </ButtonV2>
++          <ButtonV2
++            size="small"
++            variant="ghost"
++            disabled={busy()}
++            onClick={() => props.actions.onStop(definition().id)}
++            aria-label={`Stop ${definition().name}`}
++          >
++            Stop
++          </ButtonV2>
++        </Show>
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/app/src/components/previews/PreviewPanel.tsx b/packages/app/src/components/previews/PreviewPanel.tsx
+new file mode 100644
+index 0000000..d5515b7
+--- /dev/null
++++ b/packages/app/src/components/previews/PreviewPanel.tsx
+@@ -0,0 +1,91 @@
++import { For, Show, createSignal, type JSX } from "solid-js"
++import type { PreviewSnapshot } from "@/context/platform"
++import { PreviewItem, type PreviewItemActions } from "./PreviewItem"
++import { PreviewDetails } from "./PreviewDetails"
++
++export interface PreviewPanelActions extends PreviewItemActions {
++  onRefreshLogs: (id: string) => void
++}
++
++export function PreviewPanel(props: {
++  snapshots: PreviewSnapshot[]
++  logs: (id: string) => string[]
++  actions: PreviewPanelActions
++  onClose: () => void
++}): JSX.Element {
++  const [selectedId, setSelectedId] = createSignal<string | undefined>(undefined)
++  const selected = () => props.snapshots.find((s) => s.definition.id === selectedId())
++
++  const select = (id: string) => {
++    setSelectedId((current) => (current === id ? undefined : id))
++    props.actions.onRefreshLogs(id)
++  }
++
++  return (
++    <section
++      role="dialog"
++      aria-label="Previews"
++      class="flex max-h-[420px] w-[340px] min-h-0 flex-col gap-2 rounded-lg border bg-v2-background-bg-base p-3 shadow-lg"
++      onKeyDown={(event) => {
++        if (event.key === "Escape") {
++          event.stopPropagation()
++          props.onClose()
++        }
++      }}
++    >
++      <div class="flex items-center gap-2">
++        <h2 class="flex-1 text-sm font-semibold">Previews</h2>
++        <button
++          type="button"
++          class="rounded px-1.5 py-0.5 text-v2-text-text-muted hover:bg-surface-base-hover"
++          onClick={props.onClose}
++          aria-label="Close previews"
++        >
++          ✕
++        </button>
++      </div>
++
++      <Show
++        when={props.snapshots.length > 0}
++        fallback={
++          <div class="flex flex-col gap-2 py-4 text-center">
++            <p class="font-medium">No previews configured.</p>
++            <p class="text-sm text-v2-text-text-muted">
++              Your coding agent can register a preview when it creates a runnable application.
++            </p>
++          </div>
++        }
++      >
++        <Show
++          when={selected()}
++          fallback={
++            <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto" role="list" aria-label="Preview list">
++              <For each={props.snapshots}>
++                {(snapshot) => (
++                  <PreviewItem
++                    snapshot={snapshot}
++                    selected={selectedId() === snapshot.definition.id}
++                    actions={{ ...props.actions, onSelect: select }}
++                  />
++                )}
++              </For>
++            </div>
++          }
++          keyed
++        >
++          {(snapshot: PreviewSnapshot) => (
++            <PreviewDetails
++              snapshot={snapshot}
++              logs={props.logs(snapshot.definition.id)}
++              onStart={props.actions.onStart}
++              onStop={props.actions.onStop}
++              onRestart={props.actions.onRestart}
++              onOpen={props.actions.onOpen}
++              onBack={() => setSelectedId(undefined)}
++            />
++          )}
++        </Show>
++      </Show>
++    </section>
++  )
++}
+diff --git a/packages/app/src/components/previews/status.ts b/packages/app/src/components/previews/status.ts
+new file mode 100644
+index 0000000..4d1cbb3
+--- /dev/null
++++ b/packages/app/src/components/previews/status.ts
+@@ -0,0 +1,93 @@
++import type { PreviewSnapshot, PreviewStatus } from "@/context/platform"
++
++export type PreviewAggregate = "idle" | "active" | "starting" | "error"
++
++export function aggregateStatus(snapshots: PreviewSnapshot[]): PreviewAggregate {
++  if (snapshots.some((s) => s.status === "crashed" || s.status === "port-in-use")) {
++    return "error"
++  }
++  if (snapshots.some((s) => s.status === "starting" || s.status === "stopping")) {
++    return "starting"
++  }
++  if (snapshots.some((s) => s.status === "running")) {
++    return "active"
++  }
++  return "idle"
++}
++
++export function runningCount(snapshots: PreviewSnapshot[]): number {
++  return snapshots.filter((s) => s.status === "running").length
++}
++
++/** Tooltip text: `Previews` plus an optional live suffix. */
++export function previewTooltip(snapshots: PreviewSnapshot[]): string {
++  const running = runningCount(snapshots)
++  if (snapshots.length === 0) return "Previews"
++  if (running === 0) return "Previews"
++  return `Previews · ${running} running`
++}
++
++export function statusLabel(status: PreviewStatus): string {
++  switch (status) {
++    case "running":
++      return "Running"
++    case "starting":
++      return "Starting"
++    case "stopping":
++      return "Stopping"
++    case "stopped":
++      return "Stopped"
++    case "crashed":
++      return "Crashed"
++    case "port-in-use":
++      return "Port in use"
++  }
++}
++
++/** Status dot color: gray / green / red / yellow. */
++export function statusColor(status: PreviewStatus): string {
++  switch (status) {
++    case "running":
++      return "var(--v2-icon-icon-success, #22c55e)"
++    case "starting":
++    case "stopping":
++      return "var(--v2-icon-icon-warning, #eab308)"
++    case "crashed":
++    case "port-in-use":
++      return "var(--v2-icon-icon-danger, #ef4444)"
++    case "stopped":
++      return "var(--v2-icon-icon-muted, #9ca3af)"
++  }
++}
++
++export function statusGlyph(status: PreviewStatus): string {
++  switch (status) {
++    case "running":
++      return "●"
++    case "starting":
++    case "stopping":
++      return "◐"
++    case "stopped":
++      return "○"
++    case "crashed":
++      return "×"
++    case "port-in-use":
++      return "⚠"
++  }
++}
++
++export function formatUptime(uptimeMs?: number): string {
++  if (uptimeMs === undefined) return "—"
++  const totalSeconds = Math.max(0, Math.floor(uptimeMs / 1000))
++  const hours = Math.floor(totalSeconds / 3600)
++  const minutes = Math.floor((totalSeconds % 3600) / 60)
++  const seconds = totalSeconds % 60
++  const pad = (n: number) => String(n).padStart(2, "0")
++  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
++}
++
++export function previewUrl(definition: PreviewSnapshot["definition"]): string {
++  const host = definition.host ?? "localhost"
++  const path = definition.path ?? "/"
++  return `http://${host}:${definition.port}${path}`
++}
+diff --git a/packages/app/src/components/previews/store.ts b/packages/app/src/components/previews/store.ts
+new file mode 100644
+index 0000000..b77dc04
+--- /dev/null
++++ b/packages/app/src/components/previews/store.ts
+@@ -0,0 +1,93 @@
++import { createSignal } from "solid-js"
++import type { PreviewPlatform, PreviewSnapshot } from "@/context/platform"
++
++export interface PreviewStore {
++  snapshots: () => PreviewSnapshot[]
++  logs: (id: string) => string[]
++  busy: (id: string) => boolean
++  start: (id: string) => Promise<void>
++  stop: (id: string) => Promise<void>
++  restart: (id: string) => Promise<void>
++  open: (id: string) => Promise<void>
++  refreshLogs: (id: string) => Promise<void>
++}
++
++/**
++ * Reactive store over the platform preview backend. Polls for snapshots so
++ * the panel stays live; per-preview log cache is bounded at 2000 lines.
++ */
++export function createPreviewStore(backend: PreviewPlatform, directory: string): PreviewStore {
++  const [snapshots, setSnapshots] = createSignal<PreviewSnapshot[]>([])
++  const [logCache, setLogCache] = createSignal<Record<string, string[]>>({})
++  const [busyIds, setBusyIds] = createSignal<Record<string, boolean>>({})
++  // First-seen Running timestamps so uptime ticks live between polls.
++  const runningSince = new Map<string, number>()
++
++  const setBusy = (id: string, busy: boolean) =>
++    setBusyIds((current) => ({ ...current, [id]: busy }))
++
++  async function refresh(): Promise<void> {
++    try {
++      const now = Date.now()
++      const list = await backend.list(directory)
++      for (const snapshot of list) {
++        if (snapshot.status === "running") {
++          if (!runningSince.has(snapshot.definition.id)) {
++            runningSince.set(
++              snapshot.definition.id,
++              now - (snapshot.uptimeMs ?? 0),
++            )
++          }
++        } else {
++          runningSince.delete(snapshot.definition.id)
++        }
++      }
++      setSnapshots(
++        list.map((snapshot) => {
++          const since = runningSince.get(snapshot.definition.id)
++          if (snapshot.status === "running" && since !== undefined) {
++            return { ...snapshot, uptimeMs: Math.max(0, now - since) }
++          }
++          return snapshot
++        }),
++      )
++    } catch {
++      // Backend unavailable (e.g. web build); keep last snapshots.
++    }
++  }
++
++  void refresh()
++  const pollTimer = setInterval(() => {
++    void refresh()
++  }, 1500)
++
++  const dispose = () => clearInterval(pollTimer)
++  if (typeof window !== "undefined") {
++    window.addEventListener("beforeunload", dispose, { once: true })
++  }
++
++  async function guard(id: string, action: () => Promise<unknown>): Promise<void> {
++    if (busyIds()[id]) return
++    setBusy(id, true)
++    try {
++      await action()
++      await refresh()
++    } finally {
++      setBusy(id, false)
++    }
++  }
++
++  return {
++    snapshots,
++    logs: (id: string) => logCache()[id] ?? [],
++    busy: (id: string) => busyIds()[id] ?? false,
++    start: (id: string) => guard(id, () => backend.start(directory, id)),
++    stop: (id: string) => guard(id, () => backend.stop(directory, id)),
++    restart: (id: string) => guard(id, () => backend.restart(directory, id)),
++    open: (id: string) => backend.open(directory, id),
++    refreshLogs: async (id: string) => {
++      const lines = await backend.logs(directory, id, 500)
++      setLogCache((current) => ({ ...current, [id]: lines.slice(-2000) }))
++    },
++  }
++}
+diff --git a/packages/app/src/components/previews/toolbar-init.tsx b/packages/app/src/components/previews/toolbar-init.tsx
+new file mode 100644
+index 0000000..1c1264d
+--- /dev/null
++++ b/packages/app/src/components/previews/toolbar-init.tsx
+@@ -0,0 +1,13 @@
++import { registerChatToolbarAction } from "@/components/chat-toolbar-slot"
++import { PreviewHost } from "./PreviewHost"
++
++/**
++ * Registers the Preview button right after the context indicator
++ * (order 10 keeps it adjacent; context usage is order 0).
++ * Imported for its side effect by the session timeline.
++ */
++export const unregisterPreviewToolbarAction = registerChatToolbarAction({
++  id: "preview",
++  order: 10,
++  render: () => <PreviewHost />,
++})
+diff --git a/packages/app/src/context/platform.tsx b/packages/app/src/context/platform.tsx
+index 0408b23..ac42832 100644
+--- a/packages/app/src/context/platform.tsx
++++ b/packages/app/src/context/platform.tsx
+@@ -121,6 +121,51 @@ type PlatformBase = {
+ 
+   /** Record a fatal renderer error in platform logs (desktop only) */
+   recordFatalRendererError?(error: FatalRendererErrorLog): Promise<void>
++
++  /** Manage project preview servers (desktop only, provided by the preview integration) */
++  previews?: PreviewPlatform
++}
++
++export type PreviewStatus =
++  | "stopped"
++  | "starting"
++  | "running"
++  | "stopping"
++  | "crashed"
++  | "port-in-use"
++
++export interface PreviewDefinition {
++  id: string
++  name: string
++  command: string
++  cwd?: string
++  port: number
++  host?: string
++  path?: string
++  env?: Record<string, string>
++  autoStart?: boolean
++}
++
++export interface PreviewSnapshot {
++  definition: PreviewDefinition
++  status: PreviewStatus
++  pid?: number
++  url?: string
++  uptimeMs?: number
++  error?: string
++}
++
++/**
++ * Desktop preview backend. Implemented in the Electron main process;
++ * the renderer only calls these typed methods (never spawns processes).
++ */
++export interface PreviewPlatform {
++  list(directory: string): Promise<PreviewSnapshot[]>
++  start(directory: string, id: string): Promise<boolean>
++  stop(directory: string, id: string): Promise<void>
++  restart(directory: string, id: string): Promise<boolean>
++  open(directory: string, id: string): Promise<void>
++  logs(directory: string, id: string, limit?: number): Promise<string[]>
+ }
+ 
+ export type Platform = PlatformBase &
+diff --git a/packages/app/src/pages/session/timeline/message-timeline.tsx b/packages/app/src/pages/session/timeline/message-timeline.tsx
+index 69751f2..8b8f760 100644
+--- a/packages/app/src/pages/session/timeline/message-timeline.tsx
++++ b/packages/app/src/pages/session/timeline/message-timeline.tsx
+@@ -61,6 +61,7 @@ import { useFileComponent } from "@opencode-ai/ui/context/file"
+ import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
+ import { SessionContextUsage } from "@/components/session-context-usage"
+ import { ChatToolbarSlot } from "@/components/chat-toolbar-slot"
++import "@/components/previews/toolbar-init"
+ import { useDialog } from "@opencode-ai/ui/context/dialog"
+ import { useLanguage } from "@/context/language"
+ import { useSessionKey } from "@/pages/session/session-layout"
+diff --git a/packages/desktop/package.json b/packages/desktop/package.json
+index e652a6a..2b553ff 100644
+--- a/packages/desktop/package.json
++++ b/packages/desktop/package.json
+@@ -31,7 +31,8 @@
+     "electron-store": "11.0.2",
+     "electron-updater": "6.8.9",
+     "electron-window-state": "^5.0.3",
+-    "drizzle-orm": "catalog:"
++    "drizzle-orm": "catalog:",
++    "@orel56000/opencode-preview": "file:/Users/orel/Documents/GitHub/opencode-preview"
+   },
+   "devDependencies": {
+     "@actions/artifact": "4.0.0",
+diff --git a/packages/desktop/src/main/index.ts b/packages/desktop/src/main/index.ts
+index 183fc63..6a40e4c 100644
+--- a/packages/desktop/src/main/index.ts
++++ b/packages/desktop/src/main/index.ts
+@@ -15,6 +15,7 @@ import type { ServerReadyData } from "../preload/types"
+ import { checkAppExists, resolveAppPath } from "./apps"
+ import { CHANNEL } from "./constants"
+ import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
++import { disposePreviewServices } from "./previews/service-host"
+ import { forwardInitializationFailure } from "./initialization"
+ import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
+ import { createMenu } from "./menu"
+@@ -167,6 +168,7 @@ const main = Effect.gen(function* () {
+   const stopSidecars = async () => {
+     await killSidecar()
+     wslServers.stopAll()
++    await disposePreviewServices()
+   }
+   const relaunch = () => {
+     setAppQuitting()
+diff --git a/packages/desktop/src/main/ipc.ts b/packages/desktop/src/main/ipc.ts
+index d8abfc1..f8ccc4b 100644
+--- a/packages/desktop/src/main/ipc.ts
++++ b/packages/desktop/src/main/ipc.ts
+@@ -24,6 +24,7 @@ import type { UpdaterController } from "./updater-controller"
+ import { createUpdaterSubscriptions } from "./updater-subscriptions"
+ import { createDesktopDraftStore } from "./draft-store"
+ import { nativeT } from "./native-translations"
++import { registerPreviewIpcHandlers } from "./previews/service-host"
+ 
+ const pickerFilters = (ext?: string[]) => {
+   if (!ext || ext.length === 0) return undefined
+@@ -62,6 +63,8 @@ export function registerIpcHandlers(deps: Deps) {
+   app.once("will-quit", () => drafts.close())
+   app.on("browser-window-created", (_event, win) => win.on("session-end", () => drafts.flush()))
+ 
++  registerPreviewIpcHandlers()
++
+   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
+   ipcMain.handle("await-initialization", () => deps.awaitInitialization())
+   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
+diff --git a/packages/desktop/src/main/previews/service-host.ts b/packages/desktop/src/main/previews/service-host.ts
+new file mode 100644
+index 0000000..f6e4f8d
+--- /dev/null
++++ b/packages/desktop/src/main/previews/service-host.ts
+@@ -0,0 +1,88 @@
++import { ipcMain, type IpcMainInvokeEvent } from "electron"
++import { PreviewService } from "@orel56000/opencode-preview/service"
++import { PreviewIpcChannel } from "@orel56000/opencode-preview/ipc"
++import { openExternalURL } from "../windows"
++
++/**
++ * Preview backend host for Electron main.
++ *
++ * One `PreviewService` per project directory (shared across windows).
++ * The renderer never spawns processes — it calls these typed IPC handlers.
++ * Unknown port occupants are reported, never killed (enforced by the service).
++ */
++
++const services = new Map<string, PreviewService>()
++
++export function getPreviewService(projectDirectory: string): PreviewService {
++  const existing = services.get(projectDirectory)
++  if (existing) return existing
++  const service = new PreviewService({
++    projectDirectory,
++    opener: (url) => openExternalURL(url),
++  })
++  services.set(projectDirectory, service)
++  void service.init()
++  return service
++}
++
++function readDirectory(payload: unknown): string {
++  const directory = (payload as { directory?: unknown } | null)?.directory
++  if (typeof directory !== "string" || directory.length === 0 || directory.length > 4096) {
++    throw new Error("Invalid preview directory")
++  }
++  return directory
++}
++
++function readId(payload: unknown): string {
++  const id = (payload as { id?: unknown } | null)?.id
++  if (typeof id !== "string" || id.length === 0 || id.length > 128) {
++    throw new Error("Invalid preview id")
++  }
++  return id
++}
++
++function readLimit(payload: unknown): number | undefined {
++  const limit = (payload as { limit?: unknown } | null)?.limit
++  if (limit === undefined) return undefined
++  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 2000) {
++    throw new Error("Invalid log limit")
++  }
++  return limit
++}
++
++export function registerPreviewIpcHandlers(): void {
++  ipcMain.handle(PreviewIpcChannel.list, (event: IpcMainInvokeEvent, payload: unknown) => {
++    void event
++    return getPreviewService(readDirectory(payload)).list()
++  })
++  ipcMain.handle(PreviewIpcChannel.start, (_event: IpcMainInvokeEvent, payload: unknown) => {
++    return getPreviewService(readDirectory(payload)).start(readId(payload))
++  })
++  ipcMain.handle(PreviewIpcChannel.stop, async (_event: IpcMainInvokeEvent, payload: unknown) => {
++    await getPreviewService(readDirectory(payload)).stop(readId(payload))
++  })
++  ipcMain.handle(PreviewIpcChannel.restart, (_event: IpcMainInvokeEvent, payload: unknown) => {
++    return getPreviewService(readDirectory(payload)).restart(readId(payload))
++  })
++  ipcMain.handle(PreviewIpcChannel.open, async (_event: IpcMainInvokeEvent, payload: unknown) => {
++    await getPreviewService(readDirectory(payload)).open(readId(payload))
++  })
++  ipcMain.handle(PreviewIpcChannel.logs, (_event: IpcMainInvokeEvent, payload: unknown) => {
++    return getPreviewService(readDirectory(payload)).logs(readId(payload), readLimit(payload))
++  })
++}
++
++export function removePreviewIpcHandlers(): void {
++  for (const channel of Object.values(PreviewIpcChannel)) {
++    ipcMain.removeHandler(channel)
++  }
++}
++
++/** Stops all managed preview processes. Called during app shutdown. */
++export async function disposePreviewServices(): Promise<void> {
++  const all = [...services.values()]
++  services.clear()
++  for (const service of all) {
++    await service.dispose()
++  }
++}
+diff --git a/packages/desktop/src/preload/index.ts b/packages/desktop/src/preload/index.ts
+index dae18b0..43b8b7b 100644
+--- a/packages/desktop/src/preload/index.ts
++++ b/packages/desktop/src/preload/index.ts
+@@ -57,6 +57,15 @@ const api: ElectronAPI = {
+     install: () => ipcRenderer.invoke("updater-install"),
+   },
+   consumeInitialDeepLinks: () => ipcRenderer.invoke("consume-initial-deep-links"),
++  previews: {
++    list: (directory) => ipcRenderer.invoke("opencode-preview:list", { directory }),
++    start: (directory, id) => ipcRenderer.invoke("opencode-preview:start", { directory, id }),
++    stop: (directory, id) => ipcRenderer.invoke("opencode-preview:stop", { directory, id }),
++    restart: (directory, id) => ipcRenderer.invoke("opencode-preview:restart", { directory, id }),
++    open: (directory, id) => ipcRenderer.invoke("opencode-preview:open", { directory, id }),
++    logs: (directory, id, limit) =>
++      ipcRenderer.invoke("opencode-preview:logs", { directory, id, limit }),
++  },
+   getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),
+   setDefaultServerUrl: (url) => ipcRenderer.invoke("set-default-server-url", url),
+   isFirstLaunchOnboardingPending: () => ipcRenderer.invoke("is-first-launch-onboarding-pending"),
+diff --git a/packages/desktop/src/preload/types.ts b/packages/desktop/src/preload/types.ts
+index 20c3909..7cd0781 100644
+--- a/packages/desktop/src/preload/types.ts
++++ b/packages/desktop/src/preload/types.ts
+@@ -42,7 +42,36 @@ export type FatalRendererError = {
+   os?: string
+ }
+ 
++export type PreviewBridgeSnapshot = {
++  definition: {
++    id: string
++    name: string
++    command: string
++    cwd?: string
++    port: number
++    host?: string
++    path?: string
++    env?: Record<string, string>
++    autoStart?: boolean
++  }
++  status: "stopped" | "starting" | "running" | "stopping" | "crashed" | "port-in-use"
++  pid?: number
++  url?: string
++  uptimeMs?: number
++  error?: string
++}
++
++export type PreviewBridgeAPI = {
++  list: (directory: string) => Promise<PreviewBridgeSnapshot[]>
++  start: (directory: string, id: string) => Promise<boolean>
++  stop: (directory: string, id: string) => Promise<void>
++  restart: (directory: string, id: string) => Promise<boolean>
++  open: (directory: string, id: string) => Promise<void>
++  logs: (directory: string, id: string, limit?: number) => Promise<string[]>
++}
++
+ export type ElectronAPI = {
++  previews: PreviewBridgeAPI
+   killSidecar: () => Promise<void>
+   installCli: () => Promise<string>
+   awaitInitialization: () => Promise<ServerReadyData>
+diff --git a/packages/desktop/src/renderer/index.tsx b/packages/desktop/src/renderer/index.tsx
+index 496060e..414372c 100644
+--- a/packages/desktop/src/renderer/index.tsx
++++ b/packages/desktop/src/renderer/index.tsx
+@@ -211,6 +211,15 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
+     openExternal(url: string) {
+       window.api.openExternal(url)
+     },
++    previews: {
++      list: (directory: string) => window.api.previews.list(directory),
++      start: (directory: string, id: string) => window.api.previews.start(directory, id),
++      stop: (directory: string, id: string) => window.api.previews.stop(directory, id),
++      restart: (directory: string, id: string) => window.api.previews.restart(directory, id),
++      open: (directory: string, id: string) => window.api.previews.open(directory, id),
++      logs: (directory: string, id: string, limit?: number) =>
++        window.api.previews.logs(directory, id, limit),
++    },
+     openLocalFile(url: string) {
+       window.api.openLocalFile(url)
+     },
+-- 
+2.50.1 (Apple Git-155)
+

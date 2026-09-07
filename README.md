@@ -119,6 +119,17 @@ CSC_IDENTITY_AUTO_DISCOVERY=false bun run package:mac
 open "dist/mac-arm64/OpenCode Dev.app"
 ```
 
+Staying current with OpenCode updates: re-running one command rebuilds the
+patched app on the latest upstream —
+
+```bash
+./scripts/rebuild-desktop.sh
+```
+
+This clones/updates upstream, re-applies `desktop-patch/upstream-commits/`,
+and repackages. Your stock `OpenCode.app` keeps auto-updating untouched;
+re-run the script whenever you want the Preview build back in sync.
+
 The Preview button appears next to the context indicator; process management
 runs in Electron main via `PreviewService`. Once the slot primitive lands
 upstream, Desktop installation becomes a plain plugin install.
