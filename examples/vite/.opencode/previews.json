@@ -4,8 +4,9 @@
       "id": "web",
       "name": "Frontend",
       "command": "npm run dev",
+      "cwd": ".",
       "port": 5173,
-      "autoStart": false
+      "path": "/"
     }
   ]
 }

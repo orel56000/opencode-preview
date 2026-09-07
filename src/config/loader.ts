@@ -102,6 +102,49 @@ export async function registerPreview(
   return { ok: true }
 }
 
+export async function removePreview(
+  projectDirectory: string,
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const loaded = await loadPreviewsConfig(projectDirectory)
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error }
+  }
+  const index = loaded.config.previews.findIndex((preview) => preview.id === id)
+  if (index < 0) {
+    return { ok: false, error: `No preview with id "${id}"` }
+  }
+  loaded.config.previews.splice(index, 1)
+  try {
+    await savePreviewsConfig(projectDirectory, loaded.config)
+  } catch (error) {
+    return { ok: false, error: `Failed to save config: ${String(error)}` }
+  }
+  return { ok: true }
+}
+
+export async function setAutoStart(
+  projectDirectory: string,
+  id: string,
+  autoStart: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const loaded = await loadPreviewsConfig(projectDirectory)
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error }
+  }
+  const preview = loaded.config.previews.find((p) => p.id === id)
+  if (!preview) {
+    return { ok: false, error: `No preview with id "${id}"` }
+  }
+  preview.autoStart = autoStart
+  try {
+    await savePreviewsConfig(projectDirectory, loaded.config)
+  } catch (error) {
+    return { ok: false, error: `Failed to save config: ${String(error)}` }
+  }
+  return { ok: true }
+}
+
 export async function detectPreviews(
   projectDirectory: string,
 ): Promise<PreviewDefinition[]> {

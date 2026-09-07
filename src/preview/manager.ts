@@ -1,11 +1,12 @@
 import { watchFile, unwatchFile } from "node:fs"
 import { getConfigPath, loadPreviewsConfig } from "../config/loader.js"
 import type { PreviewDefinition } from "../types/index.js"
-import { PreviewInstance } from "./process.js"
+import { PreviewInstance, type UrlOpener } from "./process.js"
 
 export class PreviewManager {
   private readonly projectDirectory: string
   private readonly onChange?: () => void
+  private readonly opener?: UrlOpener
   private instances = new Map<string, PreviewInstance>()
   private configPath: string
   private debounceTimer: ReturnType<typeof setTimeout> | undefined
@@ -14,9 +15,11 @@ export class PreviewManager {
   constructor(options: {
     projectDirectory: string
     onChange?: () => void
+    opener?: UrlOpener
   }) {
     this.projectDirectory = options.projectDirectory
     this.onChange = options.onChange
+    this.opener = options.opener
     this.configPath = getConfigPath(options.projectDirectory)
   }
 
@@ -136,6 +139,7 @@ export class PreviewManager {
       definition,
       projectDirectory: this.projectDirectory,
       onChange: () => this.onChange?.(),
+      opener: this.opener,
     })
   }
 }

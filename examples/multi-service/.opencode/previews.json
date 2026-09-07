@@ -4,15 +4,16 @@
       "id": "web",
       "name": "Frontend",
       "command": "npm run dev:web",
+      "cwd": ".",
       "port": 5173,
-      "autoStart": false
+      "path": "/"
     },
     {
       "id": "api",
       "name": "API",
       "command": "npm run dev:api",
-      "port": 3000,
-      "autoStart": false
+      "cwd": ".",
+      "port": 3000
     }
   ]
 }

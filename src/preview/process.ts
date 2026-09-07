@@ -5,16 +5,22 @@ import type { PreviewDefinition, PreviewState } from "../types/index.js"
 import { RollingBuffer } from "./logs.js"
 import { buildUrl, isPortInUse, waitForPort } from "./ports.js"
 
+export type UrlOpener = (url: string) => void | Promise<void>
+
 export interface PreviewInstanceOptions {
   definition: PreviewDefinition
   projectDirectory: string
   onChange?: () => void
+  /** Override how URLs are opened. Defaults to the `open` package.
+   * Electron hosts inject `shell.openExternal` here. */
+  opener?: UrlOpener
 }
 
 export class PreviewInstance {
   readonly definition: PreviewDefinition
   private readonly projectDirectory: string
   private readonly onChange?: () => void
+  private readonly opener: UrlOpener
   private state: PreviewState
   private child: ChildProcess | undefined
   private startTime: number | undefined
@@ -25,6 +31,11 @@ export class PreviewInstance {
     this.definition = options.definition
     this.projectDirectory = options.projectDirectory
     this.onChange = options.onChange
+    this.opener =
+      options.opener ??
+      (async (url) => {
+        await open(url)
+      })
     this.logs = new RollingBuffer({
       maxLines: 2000,
       onChange: () => this.onChange?.(),
@@ -179,7 +190,7 @@ export class PreviewInstance {
 
   async open(): Promise<void> {
     const url = buildUrl(this.definition)
-    await open(url)
+    await this.opener(url)
   }
 
   async dispose(): Promise<void> {

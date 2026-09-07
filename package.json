@@ -1,7 +1,7 @@
 {
   "name": "@orel56000/opencode-preview",
   "version": "0.1.0",
-  "description": "Interactive preview manager for OpenCode — start, stop, restart and open development servers directly from the TUI.",
+  "description": "Native preview manager for OpenCode Desktop — start, stop, restart and open development servers directly from the app.",
   "type": "module",
   "license": "MIT",
   "author": "orel56000",
@@ -12,16 +12,17 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "electron",
+    "solidjs",
     "developer-tools",
-    "terminal",
-    "tui",
-    "typescript",
+    "preview",
     "dev-server",
-    "preview"
+    "typescript"
   ],
   "files": [
     "src",
     "dist",
+    "desktop-patch",
     "README.md",
     "LICENSE"
   ],
@@ -35,6 +36,26 @@
       "types": "./src/tui.tsx",
       "import": "./src/tui.tsx",
       "default": "./src/tui.tsx"
+    },
+    "./service": {
+      "types": "./src/service/service.ts",
+      "import": "./src/service/service.ts",
+      "default": "./src/service/service.ts"
+    },
+    "./preload": {
+      "types": "./src/service/preload.ts",
+      "import": "./src/service/preload.ts",
+      "default": "./src/service/preload.ts"
+    },
+    "./service-client": {
+      "types": "./src/service/client.ts",
+      "import": "./src/service/client.ts",
+      "default": "./src/service/client.ts"
+    },
+    "./desktop": {
+      "types": "./src/desktop/index.ts",
+      "import": "./src/desktop/index.ts",
+      "default": "./src/desktop/index.ts"
     }
   },
   "scripts": {

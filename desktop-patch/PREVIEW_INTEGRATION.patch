@@ -1,0 +1,80 @@
+--- a/packages/desktop/src/main/previews/service-host.ts
++++ b/packages/desktop/src/main/previews/service-host.ts
+@@
++import { shell } from "electron"
++import { PreviewService } from "@orel56000/opencode-preview/service"
++import { registerPreviewIpcMain, type PreviewIpcMain } from "@orel56000/opencode-preview/preload"
++import { resolveExternalURL } from "../external-url"
++
++/**
++ * One PreviewService per project directory, living in Electron main.
++ * The renderer never spawns processes; it talks to this host over typed IPC.
++ */
++const services = new Map<string, PreviewService>()
++
++export function getPreviewService(projectDirectory: string): PreviewService {
++  const existing = services.get(projectDirectory)
++  if (existing) return existing
++  const service = new PreviewService({
++    projectDirectory,
++    opener: (url) => {
++      const safe = resolveExternalURL(url)
++      if (safe) void shell.openExternal(safe)
++    },
++  })
++  services.set(projectDirectory, service)
++  void service.init()
++  return service
++}
++
++export function registerPreviewServiceIpc(ipcMain: PreviewIpcMain, projectDirectory: string): () => void {
++  const service = getPreviewService(projectDirectory)
++  return registerPreviewIpcMain(ipcMain, {
++    list: () => service.list(),
++    start: (id) => service.start(id),
++    stop: (id) => service.stop(id),
++    restart: (id) => service.restart(id),
++    open: (id) => service.open(id),
++    logs: (id, limit) => service.logs(id, limit),
++  })
++}
++
++export async function disposePreviewServices(): Promise<void> {
++  for (const service of services.values()) await service.dispose()
++  services.clear()
++}
+--- a/packages/desktop/src/preload/index.ts
++++ b/packages/desktop/src/preload/index.ts
+@@
+ import { contextBridge, ipcRenderer, webUtils } from "electron"
++import { createPreviewPreloadBridge } from "@orel56000/opencode-preview/preload"
+@@
+ const api: ElectronAPI = {
++  previews: createPreviewPreloadBridge(ipcRenderer),
+   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
+--- a/packages/desktop/src/preload/types.ts
++++ b/packages/desktop/src/preload/types.ts
+@@
++import type { PreviewElectronBridge } from "@orel56000/opencode-preview/preload"
+ export type ElectronAPI = {
++  previews: PreviewElectronBridge
+   killSidecar: () => Promise<void>
+--- a/packages/app/src/components/previews/preview-host-init.tsx
++++ b/packages/app/src/components/previews/preview-host-init.tsx
+@@
++import { PreviewHost } from "@orel56000/opencode-preview/desktop"
++import { PreviewClient } from "@orel56000/opencode-preview/service-client"
++import { registerChatToolbarAction } from "@/components/chat-toolbar-slot"
++
++/**
++ * Registers the Preview button right after the context indicator
++ * (order 10 keeps it adjacent; context usage is order 0).
++ */
++export function initPreviewToolbar(): () => void {
++  const client = new PreviewClient({ bridge: window.electronAPI.previews })
++  return registerChatToolbarAction({
++    id: "preview",
++    order: 10,
++    render: () => <PreviewHost client={client} />,
++  })
++}
