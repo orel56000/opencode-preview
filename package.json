@@ -1,0 +1,80 @@
+{
+  "name": "opencode-preview",
+  "version": "0.1.0",
+  "description": "Interactive preview manager for OpenCode — start, stop, restart and open development servers directly from the TUI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "orel56000",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orel56000/opencode-preview.git"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "developer-tools",
+    "terminal",
+    "tui",
+    "typescript",
+    "dev-server",
+    "preview"
+  ],
+  "files": [
+    "src",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./tui": {
+      "types": "./src/tui.tsx",
+      "import": "./src/tui.tsx",
+      "default": "./src/tui.tsx"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/**/*.test.js",
+    "lint": "tsc --noEmit",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "open": "^10.1.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.21",
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.29",
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
+    "@types/node": "^22.0.0",
+    "solid-js": "^1.9.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "opencode-preview-example-vite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

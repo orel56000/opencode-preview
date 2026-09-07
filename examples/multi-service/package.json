@@ -1,0 +1,13 @@
+{
+  "name": "opencode-preview-example-multi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:web": "vite --port 5173 --host 127.0.0.1",
+    "dev:api": "node server.js"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
