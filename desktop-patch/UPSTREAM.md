@@ -1,73 +1,71 @@
-# Upstream integration proposal for OpenCode Desktop
+# Upstream integration — implemented and verified
 
-This document records the exact OpenCode source locations this plugin integrates
-with, and the minimal upstream change required for a native Desktop experience.
+Target: OpenCode source (`sst/opencode`, branch `dev`, commit `57ef382`).
 
-Verified against OpenCode source (`sst/opencode`, `packages/*`, v1.18.x era).
+Two commits on a local branch `preview-desktop-slot`:
 
-## 1. Where the context indicator lives
+1. `5384aff` — **generic chat toolbar slot** (upstream-suitable, no new deps)
+2. `4d9aefa` — **Preview integration** (uses this package for the backend)
 
-- Component: `packages/app/src/components/session-context-usage.tsx`
-  (`SessionContextUsage`, circular `ProgressCircle` / `ProgressCircleV2`).
-- Placement in the chat header: `packages/app/src/pages/session/timeline/message-timeline.tsx`
-  (renders `<SessionContextUsage placement="bottom" … />` in the session title
-  row, next to the overflow menu).
-- Also used as `variant="indicator"` in `packages/app/src/pages/session/session-side-panel.tsx`.
+The `*.patch` files in this directory were the initial proposal; the list
+below is what was actually implemented, built, and tested in a packaged
+`OpenCode Dev.app` on macOS (arm64).
 
-There is **no toolbar extension point** in the Desktop renderer today.
+## Commit 1 — generic slot
 
-## 2. Why plugins cannot inject Desktop UI today
+| File | Change |
+|---|---|
+| `packages/app/src/components/chat-toolbar-slot.tsx` | NEW: `registerChatToolbarAction()` / `<ChatToolbarSlot/>` |
+| `packages/app/src/pages/session/timeline/message-timeline.tsx` | render `<ChatToolbarSlot/>` directly after `<SessionContextUsage/>` |
 
-- Server plugins (`@opencode-ai/plugin`) provide `tool` hooks and lifecycle
-  events only. There is no HTTP-route or renderer-slot API.
-- TUI plugins (`@opencode-ai/plugin/tui`) can render via `api.ui.slot(...)`
-  into named slots (`sidebar_content`, `session_prompt_right`, `home_logo`,
-  `home_prompt`, `app_bottom`, `app` — see `packages/tui/src/plugin/*` and
-  `packages/tui/src/routes/*`). The Desktop renderer (`packages/app`,
-  SolidJS in Electron) has **no equivalent slot registry**.
-- Therefore Desktop UI integration requires a small upstream addition.
-  This repo proposes the smallest possible one (see below) and ships the
-  Preview UI against it. No DOM monkey-patching, no injected scripts.
+## Commit 2 — Preview integration
 
-## 3. Proposed upstream change (small, reviewable)
+| File | Change |
+|---|---|
+| `packages/app/src/context/platform.tsx` | `PreviewPlatform` + `PreviewSnapshot` types, optional `previews` field |
+| `packages/app/src/components/previews/` | NEW: `PreviewHost`, `PreviewButton`, `PreviewPanel`, `PreviewItem`, `PreviewDetails`, `store`, `status`, `toolbar-init` (adapted from `src/desktop/` in this repo) |
+| `packages/app/src/pages/session/timeline/message-timeline.tsx` | side-effect import of `toolbar-init` (registers `preview`, order 10) |
+| `packages/desktop/package.json` | `file:` dependency on this package (swap for the npm version upstream) |
+| `packages/desktop/src/main/previews/service-host.ts` | NEW: per-directory `PreviewService`, validated IPC handlers |
+| `packages/desktop/src/main/ipc.ts` | register preview IPC handlers |
+| `packages/desktop/src/main/index.ts` | `disposePreviewServices()` on shutdown |
+| `packages/desktop/src/preload/types.ts` | `PreviewBridgeAPI` + `previews` on `ElectronAPI` |
+| `packages/desktop/src/preload/index.ts` | `previews` bridge via `ipcRenderer.invoke` |
+| `packages/desktop/src/renderer/index.tsx` | `previews` on the desktop `Platform` object |
 
-**A. Generic chat-toolbar slot** — `packages/app/src/components/chat-toolbar-slot.tsx`
-(new file, ~40 lines; a copy of `src/desktop/toolbar-slot.tsx` in this repo):
+## Desktop ↔ plugin communication
 
-```tsx
-registerChatToolbarAction({ id, order, render })
+```text
+Renderer (SolidJS)                    Electron main (Node)
+PreviewHost/store                     PreviewService per project dir
+  │ usePlatform().previews              │ PreviewManager + ports + logs
+  │ window.api.previews.*               │ opener = shell.openExternal
+  ▼ typed invoke (dir-aware)            ▼ (this package's core)
+opencode-preview:list/start/stop/restart/open/logs
 ```
 
-Render `<ChatToolbarSlot />` in `message-timeline.tsx` directly after
-`<SessionContextUsage … />`. This primitive is reusable by future
-Git / Database / Docker / Testing plugins.
+- Renderer polls snapshots every 1.5s; logs fetched on selection (500 lines).
+- `directory` comes from the session SDK; main routes to the per-project
+  service. State is isolated per project.
+- URLs open via the existing validated `open-external` path (`http/https`).
+- Quitting the app stops all managed preview processes (verified: ports freed).
 
-**B. Preview backend in Electron main** — `packages/desktop/src/main/previews/*`
-(new directory):
+## Verification (packaged app, real Electron UI via CDP)
 
-- one `PreviewService` (from this package) per project directory,
-- `registerPreviewIpcMain(ipcMain, service)` from this package,
-- opener injected as `(url) => shell.openExternal(url)` reusing the existing
-  `open-external` validation (`resolveExternalURL` in
-  `packages/desktop/src/main/external-url.ts`, wired in
-  `packages/desktop/src/main/ipc.ts`).
+- `[ Context ] [ Preview ]` placement, status dot, tooltip — screenshot
+- Empty state, two-service list, Start → Running + live HTTP traffic
+- Details (URL/port/PID/ticking uptime/command) + live logs
+- Restart (new PID, serving), Open (via `shell.openExternal`), Stop ×2
+- Config watching (new `previews.json` picked up live), shutdown cleanup
 
-This mirrors the existing `wsl-servers-*` IPC pattern
-(`packages/desktop/src/main/ipc.ts`, `packages/desktop/src/preload/index.ts`).
+Screenshots: `docs/screenshots/desktop-both-running.png`,
+`docs/screenshots/desktop-details-logs.png`.
 
-**C. Renderer host** — mount `<PreviewHost client={…} />` from this package
-right after `<SessionContextUsage … />` in `message-timeline.tsx`
-(see `PREVIEW_INTEGRATION.patch`). The renderer never spawns processes;
-all lifecycle runs in Electron main through the typed bridge
-(`src/service/ipc.ts`, `preload.ts`, `client.ts`).
+## Security properties
 
-## 4. Security properties of the proposal
-
-- Preview pages are opened in the OS browser via `shell.openExternal`
-  (validated `http:`/`https:` only). No webview, no Node integration change.
-- Process kill targets only PIDs spawned by the service (negative-PID group
-  kill + `taskkill /T` on Windows). Unknown port occupants are never killed.
-- Env secrets never cross IPC; snapshots exclude `env`. Logs are bounded
-  (2000 lines) and never include env var dumps.
-- `cwd` is resolved inside the project directory; IDs/ports validated by Zod
-  on both sides of the IPC boundary.
+- Process kill targets only PIDs spawned by the service (group kill on
+  POSIX, `taskkill /T` on Windows). Unknown port occupants are reported,
+  never killed.
+- Env secrets never cross IPC and are never logged.
+- IDs/directories validated on both IPC sides.
+- No webview, no Node-integration changes.

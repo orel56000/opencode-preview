@@ -21,8 +21,30 @@ export function createPreviewStore(client: PreviewClient): PreviewStore {
   const [snapshots, setSnapshots] = createSignal<PreviewSnapshot[]>(client.current())
   const [logCache, setLogCache] = createSignal<Record<string, string[]>>({})
   const [busyIds, setBusyIds] = createSignal<Record<string, boolean>>({})
+  // First-seen Running timestamps so uptime ticks live between polls.
+  const runningSince = new Map<string, number>()
 
-  client.onChange((next) => setSnapshots(next))
+  function withLiveUptime(next: PreviewSnapshot[]): PreviewSnapshot[] {
+    const now = Date.now()
+    for (const snapshot of next) {
+      if (snapshot.status === "running") {
+        if (!runningSince.has(snapshot.definition.id)) {
+          runningSince.set(snapshot.definition.id, now - (snapshot.uptimeMs ?? 0))
+        }
+      } else {
+        runningSince.delete(snapshot.definition.id)
+      }
+    }
+    return next.map((snapshot) => {
+      const since = runningSince.get(snapshot.definition.id)
+      if (snapshot.status === "running" && since !== undefined) {
+        return { ...snapshot, uptimeMs: Math.max(0, now - since) }
+      }
+      return snapshot
+    })
+  }
+
+  client.onChange((next) => setSnapshots(withLiveUptime(next)))
 
   const setBusy = (id: string, busy: boolean) =>
     setBusyIds((current) => ({ ...current, [id]: busy }))
@@ -33,6 +55,7 @@ export function createPreviewStore(client: PreviewClient): PreviewStore {
     try {
       await action()
       await client.refresh()
+      setSnapshots((current) => withLiveUptime(current))
     } finally {
       setBusy(id, false)
     }

@@ -52,6 +52,11 @@
       "import": "./dist/service/client.js",
       "default": "./dist/service/client.js"
     },
+    "./ipc": {
+      "types": "./dist/service/ipc.d.ts",
+      "import": "./dist/service/ipc.js",
+      "default": "./dist/service/ipc.js"
+    },
     "./desktop": {
       "types": "./dist/desktop/index.d.ts",
       "import": "./dist/desktop/index.js",

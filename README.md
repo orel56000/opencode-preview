@@ -30,16 +30,34 @@ Clicking **Preview** opens a native panel:
 └──────────────────────────────────┘
 ```
 
-## Status
+## Three layers
 
-- **TUI / CLI: works today.** The plugin renders a `PREVIEWS` sidebar panel in
-  OpenCode's terminal UI with start/stop/restart/open, live logs and
-  config watching.
-- **Desktop: needs a tiny upstream patch.** OpenCode Desktop currently exposes
-  no plugin UI extension point (verified against source — see
-  `desktop-patch/UPSTREAM.md`). This repo ships the complete Desktop UI plus
-  the minimal generic patch (a toolbar-slot primitive + Preview wiring) ready
-  to apply or submit upstream. No DOM hacks, no injected scripts.
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Plugin / backend (this package, works everywhere)        │
+│    config · process manager · ports · logs · agent tools    │
+├─────────────────────────────────────────────────────────────┤
+│ 2. TUI integration (works today, no patch needed)           │
+│    PREVIEWS sidebar panel in the terminal UI                │
+├─────────────────────────────────────────────────────────────┤
+│ 3. Desktop integration (needs the OpenCode extension patch) │
+│    native Preview button + panel in OpenCode Desktop        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Layer 1 — plugin/backend:** ships in this package and works everywhere.
+- **Layer 2 — TUI:** the `./tui` export renders the panel in OpenCode's
+  terminal UI today.
+- **Layer 3 — Desktop:** OpenCode Desktop exposes no plugin UI extension
+  point, so a small patch is required (see `desktop-patch/UPSTREAM.md`).
+  The integration is **implemented and verified**: a source-built
+  `OpenCode Dev.app` shows `[ Context ] [ Preview ]`, with Start / Stop /
+  Restart / Open / live status / logs / multi-service all tested in the real
+  Electron UI (screenshots below). Until the patch lands upstream, Desktop
+  users run the patched build; everyone else uses layers 1–2.
+
+![Preview panel with two running services](docs/screenshots/desktop-both-running.png)
+![Preview details with live logs](docs/screenshots/desktop-details-logs.png)
 
 ## Features
 
@@ -80,14 +98,30 @@ Or point at a local clone:
 
 ### Desktop (requires the patch in `desktop-patch/`)
 
-1. Apply `desktop-patch/CHAT_TOOLBAR_SLOT.patch` (generic toolbar slot).
-2. Apply `desktop-patch/PREVIEW_INTEGRATION.patch` (Preview backend + button).
-3. Build OpenCode Desktop. The Preview button appears next to the context
-   indicator; process management runs in Electron main via `PreviewService`.
+The patch is implemented as two commits on top of OpenCode `dev`
+(see `desktop-patch/UPSTREAM.md` for the exact file list):
 
-See `desktop-patch/UPSTREAM.md` for exact file references and the upstream-PR
-plan. Once the slot primitive lands upstream, Desktop installation becomes a
-plain plugin install.
+1. **Generic chat-toolbar slot** — `registerChatToolbarAction()` +
+   `<ChatToolbarSlot/>` rendered right after `<SessionContextUsage/>`.
+   Zero new dependencies; suitable as an upstream PR.
+2. **Preview integration** — `PreviewPlatform` extension on the app
+   `Platform` context, Preview SolidJS components, Electron-main
+   `PreviewService` backend with typed IPC, preload bridge, renderer wiring,
+   and cleanup on quit.
+
+Build & run:
+
+```bash
+cd packages/desktop
+bun install
+bun run build
+CSC_IDENTITY_AUTO_DISCOVERY=false bun run package:mac
+open "dist/mac-arm64/OpenCode Dev.app"
+```
+
+The Preview button appears next to the context indicator; process management
+runs in Electron main via `PreviewService`. Once the slot primitive lands
+upstream, Desktop installation becomes a plain plugin install.
 
 ## Configuration
 
