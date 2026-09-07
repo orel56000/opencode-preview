@@ -19,28 +19,42 @@ Interactive preview manager for OpenCode — start, stop, restart and open devel
 
 ## Installation
 
-Add the plugin to your `opencode.jsonc`:
+### From GitHub (recommended)
+
+Add the plugin to your `opencode.jsonc` via its git source:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-preview"]
+  "plugins": ["github:orel56000/opencode-preview"]
 }
 ```
 
-Or install from a local path:
+Or install a local clone by path:
 
 ```jsonc
 {
-  "plugins": ["./opencode-preview"]
+  "plugins": ["../opencode-preview"]
 }
 ```
 
-For CLI-only usage (remote server), add to `cli.json`:
+### From npm
+
+The npm name `opencode-preview` is already taken by an unrelated project, so this plugin is published scoped as `@orel56000/opencode-preview`:
+
+```jsonc
+{
+  "plugins": ["@orel56000/opencode-preview"]
+}
+```
+
+### CLI-only usage
+
+For CLI-only usage (remote server), add the plugin to `cli.json`:
 
 ```json
 {
-  "plugins": ["opencode-preview"]
+  "plugins": ["@orel56000/opencode-preview"]
 }
 ```
 
@@ -195,13 +209,13 @@ Install locally in a test project:
 
 ```bash
 cd /path/to/test-project
-ln -s ../opencode-preview node_modules/opencode-preview
+npm install /path/to/opencode-preview
 ```
 
-Or link globally:
+Or link it for live development:
 
 ```bash
-npm link && cd /path/to/test-project && npm link opencode-preview
+npm link && cd /path/to/test-project && npm link @orel56000/opencode-preview
 ```
 
 Edit source files under `src/` and reload OpenCode to see changes.

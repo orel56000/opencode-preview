@@ -1,5 +1,5 @@
 {
-  "name": "opencode-preview",
+  "name": "@orel56000/opencode-preview",
   "version": "0.1.0",
   "description": "Interactive preview manager for OpenCode — start, stop, restart and open development servers directly from the TUI.",
   "type": "module",
